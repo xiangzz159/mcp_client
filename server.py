@@ -10,13 +10,17 @@ import random
 # Create an MCP server
 mcp = FastMCP('获取A股上司公司年报')
 
+
 @mcp.tool()
-def getReports(code: int) -> dict:
+def getReports(code: str) -> dict:
     """根据股票代码查询最近5年的公告
     :param code: 上司公司股票代码
     :return: 返回5年公告信息
     """
     result = {}
+    if code.isnumeric() == False:
+        return {'responseCode': '999999', 'responseMsg': '股票代码错误'}
+
     if code[0] == '6':
         result = get_report_list_sh(str(code))
     else:
@@ -83,6 +87,7 @@ def get_report_list_sz(code: str):
         })
     return {'responseCode': '000000', 'responseMsg': 'Success', 'data': result}
 
+
 def get_report_list_sh(code: str):
     """
     获取上海上司公司5年公告
@@ -127,7 +132,7 @@ def get_report_list_sh(code: str):
             '标题': info['TITLE'],
             '下载路径': 'https://www.sse.com.cn' + info['URL']
         })
-    return {'responseCode':'000000', 'responseMsg':'Success', 'data':result}
+    return {'responseCode': '000000', 'responseMsg': 'Success', 'data': result}
 
 
 if __name__ == '__main__':

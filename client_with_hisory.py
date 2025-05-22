@@ -9,7 +9,7 @@
 
 @time: 2025/4/16 12:26
 
-@desc: mcp客户端，不支持历史消息
+@desc: mcp客户端，支持历史消息
 
 '''
 
@@ -24,10 +24,29 @@ from typing import Optional
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 import traceback
-
+import uuid
 
 # 加载 .env 文件，确保 API Key 受到保护
 load_dotenv()
+
+
+class AppLogger:
+    def __init__(self):
+        """Initialize the logger with a file that will be cleared on startup."""
+        self.log_file = "model.log"
+        # Clear the log file on startup
+        with open(self.log_file, 'w') as f:
+            f.write("")
+
+    def log(self, message):
+        """Log a message to both file and console."""
+
+        # Log to file
+        with open(self.log_file, 'a') as f:
+            f.write(message + "\n")
+
+
+logger = AppLogger()
 
 
 class MCPClient:
@@ -43,9 +62,12 @@ class MCPClient:
 
         self.client = OpenAI(api_key=self.openai_api_key, base_url=self.base_url)
         self.session: Optional[ClientSession] = None
+        self.history = []
+        self.tools = []
 
     async def connect_to_server(self, server_script_path: str):
         """连接到 MCP 服务器并列出可用工具"""
+        logger.log(f"server_script_path:{server_script_path}")
         is_python = server_script_path.endswith('.py')
         is_js = server_script_path.endswith('.js')
         if not (is_python or is_js):
@@ -68,16 +90,7 @@ class MCPClient:
         # 列出 MCP 服务器上的工具
         response = await self.session.list_tools()
         tools = response.tools
-        print("\n已连接到服务器，支持以下工具:", [tool.name for tool in tools])
-
-    async def process_query(self, query: str) -> str:
-        """
-        使用大模型处理查询并调用可用的 MCP 工具 (Function Calling)
-        """
-        messages = [{"role": "user", "content": query}]
-
-        response = await self.session.list_tools()
-
+        logger.log(f"已连接到服务器，支持以下工具:{[tool.name for tool in tools]}")
         available_tools = [{
             "type": "function",
             "function": {
@@ -86,18 +99,21 @@ class MCPClient:
                 "input_schema": tool.inputSchema
             }
         } for tool in response.tools]
-        # print(available_tools)
+        self.tools = available_tools
 
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=messages,
-            tools=available_tools
-        )
-        print("\n 第一次调用模型返回：", response)
+    async def process_query(self, query: str) -> str:
+        global trace_id
+        trace_id = uuid.uuid4()
+        """
+        使用大模型处理查询并调用可用的 MCP 工具 (Function Calling)
+        """
+        self.history.append({"role": "user", "content": query})
+
+        response = self.call_model(add_tools=True)
 
         # 处理返回的内容
         content = response.choices[0]
-        print("\ncontent:", content)
+        self.history.append(content.message.model_dump())
         if content.finish_reason == "tool_calls":
             # 如何是需要使用工具，就解析工具
             tool_call = content.message.tool_calls[0]
@@ -106,26 +122,37 @@ class MCPClient:
 
             # 执行工具
             result = await self.session.call_tool(tool_name, tool_args)
-            print(f"\n\n[Calling tool {tool_name} with args {tool_args}]\n\n")
+            logger.log(f"【traceId:{trace_id}】-[Calling tool {tool_name} with args {tool_args}]")
 
             # 将模型返回的调用哪个工具数据和工具执行完成后的数据都存入messages中
-            messages.append(content.message.model_dump())
-            messages.append({
+            self.history.append({
                 "role": "tool",
-                "content": result.content[0].text,
                 "tool_call_id": tool_call.id,
+                "name": tool_name,
+                "content": result.content[0].text
             })
-
             # 将上面的结果再返回给大模型用于生产最终的结果
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=messages,
-            )
-            print("\n 第二次调用模型返回：", response)
+            response = self.call_model()
+            self.history.append(response.choices[0].message)
             return response.choices[0].message.content
 
         return content.message.content
 
+    def call_model(self, add_tools=False):
+        if add_tools == True:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=self.history,
+                tools=self.tools
+            )
+        else:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=self.history,
+            )
+        logger.log(f"【traceId:{trace_id}】-模型请求：\n{json.dumps(self.history, indent=2, ensure_ascii=False)}")
+        logger.log(f"【traceId:{trace_id}】-模型相应：\n{json.dumps(response.model_dump_json(), indent=2, ensure_ascii=False)}")
+        return response
 
     async def chat_loop(self):
         """运行交互式聊天循环"""
@@ -144,7 +171,6 @@ class MCPClient:
                 print(f"\n⚠️ 发生错误: {str(e)}")
                 traceback.print_exc()
 
-
     async def cleanup(self):
         """清理资源"""
         await self.exit_stack.aclose()
@@ -152,7 +178,7 @@ class MCPClient:
 
 async def main():
     if len(sys.argv) < 2:
-        print("Usage: python client.py <path_to_server_script>")
+        logger.log("Usage: python client.py <path_to_server_script>")
         sys.exit(1)
 
     client = MCPClient()
