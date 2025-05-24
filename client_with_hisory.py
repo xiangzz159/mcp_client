@@ -150,7 +150,7 @@ class MCPClient:
                 model=self.model,
                 messages=self.history,
             )
-        logger.log(f"【traceId:{trace_id}】-模型请求：\n{json.dumps(self.history, indent=2, ensure_ascii=False)}")
+        logger.log(f"【traceId:{trace_id}】-模型请求：\n{str(self.history)}")
         logger.log(f"【traceId:{trace_id}】-模型响应：\n{json.dumps(response.model_dump_json(), indent=2, ensure_ascii=False)}")
         return response
 
@@ -165,8 +165,8 @@ class MCPClient:
                     break
 
                 response = await self.process_query(query)  # 发送用户输入到 OpenAI API
-                logger.log(
-                    f"【traceId:{trace_id}】-打印历史消息：\n{json.dumps(self.history, indent=2, ensure_ascii=False)}")
+                # logger.log(
+                #     f"【traceId:{trace_id}】-打印历史消息：\n{json.dumps(self.history, indent=2, ensure_ascii=False)}")
                 print(f"\n🤖 OpenAI: {response}")
 
             except Exception as e:
